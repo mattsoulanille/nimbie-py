@@ -3,7 +3,7 @@ import usb.util
 array = usb.util.array.array
 import sys
 from eject import open_tray, close_tray
-
+from typing import List, Union, Dict
 
 # Largest incoming packet in bytes as listed in the endpoint descriptor
 IN_SIZE = 64
@@ -70,8 +70,8 @@ class Nimbie:
             usb.util.endpoint_direction(e.bEndpointAddress) == \
             usb.util.ENDPOINT_OUT)
 
-
-    def send_command(self, *args):
+        
+    def send_command(self, *args: int) -> str:
         if len(args) > 6:
             raise Exception("Too many arguments. Maximum of 6")
 
@@ -83,7 +83,7 @@ class Nimbie:
         response = self.get_response()
         return self.extract_string_response(response)
 
-    def get_response(self, minimum=1):
+    def get_response(self, minimum=1) -> List[str]:
         # Get at least `minimum` messages
         messages = []
 
@@ -100,7 +100,7 @@ class Nimbie:
         return messages
 
     @staticmethod
-    def extract_string_response(response_list):
+    def extract_string_response(response_list: List[str]) -> str:
         # Sometimes it takes a while to respond
         try:
             ok_index = response_list.index("OK")
@@ -112,7 +112,7 @@ class Nimbie:
         return response_list[ok_index + 1]
 
     @staticmethod
-    def array_to_string(array):
+    def array_to_string(array: array) -> str:
         if (len(array) == 0):
             return ""
 
@@ -121,11 +121,11 @@ class Nimbie:
             raise NotStringError("Expected array to be null terminated but got " + str(array[-1]))
         return "".join([chr(x) for x in array][:-1])
 
-    def read_data(self):
+    def read_data(self) -> array:
         # Maybe have the timeout be an option instead of just 20 seconds?
         return self.in_ep.read(IN_SIZE, 20000)
 
-    def read(self):
+    def read(self) -> Union[str, array]:
         data = self.read_data()
         try:
             return self.array_to_string(data)
@@ -133,7 +133,7 @@ class Nimbie:
             return data
 
     @staticmethod
-    def decode_statuscode(statuscode):
+    def decode_statuscode(statuscode: str) -> Union[Exception, str]:
         assert statuscode[0:3] == "AT+" # The prefix for all status codes
         code = statuscode[3:] # The part that changes
 
@@ -155,35 +155,34 @@ class Nimbie:
         if (code == "S07"):
             return "Successfully placed disk on tray"
 
+        return "Unknown status code"
+
     # Try the command and throw an error if we get an error code
-    def try_command(self, *args):
+    def try_command(self, *args: int) -> str:
         result = self.send_command(*args)
         decoded = self.decode_statuscode(result)
         if isinstance(decoded, Exception):
             raise decoded
+        return decoded
         
     # Place the next disk on the tray
-    def place_disk(self):
-        # if (not self.disk_available()):
-        #     raise NoDiskError("Cannot place non-existent disk")
-
-        self.try_command(0x52, 0x01)
-
+    def place_disk(self) -> str:
+        return self.try_command(0x52, 0x01)
 
     # Lift the disk from the tray
-    def lift_disk(self):
+    def lift_disk(self) -> str:
         return self.try_command(0x47, 0x01)
 
     # Drop the disk into the accept pile
-    def accept_disk(self):
+    def accept_disk(self) -> str:
         return self.try_command(0x52, 0x02)
 
     # Drop the disk into the reject pile
-    def reject_disk(self):
+    def reject_disk(self) -> str:
         return self.try_command(0x52, 0x03)
 
     # Gets the state of the nimbie
-    def get_state(self):
+    def get_state(self) -> Dict[str, bool]:
         state_str = self.send_command(0x43)
         
         return {"disk_available": state_str[2] == "1",
@@ -194,24 +193,24 @@ class Nimbie:
                 
 
     # Whether or not a disk is available in the input queue
-    def disk_available(self):
+    def disk_available(self) -> bool:
         return self.get_state()["disk_available"]
 
     # Load the next disk into the cd reader    
-    def load_next_disk(self):
+    def load_next_disk(self) -> None:
         open_tray()
         self.place_disk()
         close_tray()
 
     # Accept the currently loaded disk
-    def accept_current_disk(self):
+    def accept_current_disk(self) -> None:
         open_tray()
         self.lift_disk()
         close_tray()
         self.accept_disk()
 
     # Reject the currently loaded disk
-    def reject_current_disk(self):
+    def reject_current_disk(self) -> None:
         open_tray()
         self.lift_disk()
         close_tray()
