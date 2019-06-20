@@ -17,10 +17,28 @@ class NotStringError(TypeError):
 class HardwareStateError(Exception):
     pass
 
+# The tray already has a disk
+class DiskInTrayError(HardwareStateError):
+    pass
+
+# The tray has no disk in it
+class NoDiskInTrayError(HardwareStateError):
+    pass
+
 # No disk available in the input queue
 class NoDiskError(HardwareStateError):
     pass
 
+# The tray is closed or opened when it should be the opposite
+class TrayInvalidStateError(HardwareStateError):
+    pass
+
+# An error involving the state of the dropper
+# Perhaps it is missing a disk
+# Perhaps you're trying to place another disk
+# while the dropper is still up.
+class DropperError(HardwareStateError):
+    pass
 
 class Nimbie:
     def __init__(self):
@@ -52,6 +70,7 @@ class Nimbie:
             usb.util.endpoint_direction(e.bEndpointAddress) == \
             usb.util.ENDPOINT_OUT)
 
+
     def send_command(self, *args):
         if len(args) > 6:
             raise Exception("Too many arguments. Maximum of 6")
@@ -61,7 +80,8 @@ class Nimbie:
             message[i + 2] = args[i]
 
         self.out_ep.write(message)
-        return self.get_response()
+        response = self.get_response()
+        return self.extract_string_response(response)
 
     def get_response(self, minimum=1):
         # Get at least `minimum` messages
@@ -78,6 +98,18 @@ class Nimbie:
             messages.append(message)
             message = self.read()
         return messages
+
+    @staticmethod
+    def extract_string_response(response_list):
+        # Sometimes it takes a while to respond
+        try:
+            ok_index = response_list.index("OK")
+        except ValueError:
+            raise ValueError("Expected message 'OK' from nimbie "
+                             +"but did not receive message. Instead got "
+                             +str(response_list))
+
+        return response_list[ok_index + 1]
 
     @staticmethod
     def array_to_string(array):
@@ -100,42 +132,71 @@ class Nimbie:
         except NotStringError:
             return data
 
-#def print_data(array):
-#    print(array_to_string(array))
+    @staticmethod
+    def decode_statuscode(statuscode):
+        assert statuscode[0:3] == "AT+" # The prefix for all status codes
+        code = statuscode[3:] # The part that changes
 
+        if (code == "S12"):
+            return DiskInTrayError("The tray already has a disk")
+        if (code == "S14"):
+            return NoDiskError("No disk in disk queue")
+        if (code == "S10"):
+            return TrayInvalidStateError("The tray is in the "
+                                         +"opposite state it should be in")
+        if (code == "S03"):
+            return DropperError("The dropper has an error (maybe it's "
+                                +"missing a disk. Maybe you're attempting "
+                                +"to place a disk on it while it's still up).")
+        if (code == "S00"):
+            return NoDiskInTrayError("The tray has no disk in it")
+        if (code == "O"):
+            return "Dropper success (lifting or dropping)"
+        if (code == "S07"):
+            return "Successfully placed disk on tray"
 
+    # Try the command and throw an error if we get an error code
+    def try_command(self, *args):
+        result = self.send_command(*args)
+        decoded = self.decode_statuscode(result)
+        if isinstance(decoded, Exception):
+            raise decoded
+        
     # Place the next disk on the tray
     def place_disk(self):
-        if (not self.disk_available()):
-            raise NoDiskError("Cannot place non-existent disk")
+        # if (not self.disk_available()):
+        #     raise NoDiskError("Cannot place non-existent disk")
 
-        return self.send_command(0x52, 0x01)
+        self.try_command(0x52, 0x01)
+
 
     # Lift the disk from the tray
     def lift_disk(self):
-        return self.send_command(0x47, 0x01)
+        return self.try_command(0x47, 0x01)
 
     # Drop the disk into the accept pile
     def accept_disk(self):
-        return self.send_command(0x52, 0x02)
+        return self.try_command(0x52, 0x02)
 
     # Drop the disk into the reject pile
     def reject_disk(self):
-        return self.send_command(0x52, 0x03)
+        return self.try_command(0x52, 0x03)
+
+    # Gets the state of the nimbie
+    def get_state(self):
+        state_str = self.send_command(0x43)
+        
+        return {"disk_available": state_str[2] == "1",
+                "disk_in_open_tray": state_str[4] == "1",
+                "disk_lifted": state_str[5] == "1",
+                "tray_out": state_str[6] == "1",
+        }
+                
 
     # Whether or not a disk is available in the input queue
     def disk_available(self):
-        status_res = self.send_command(0x43)
-        # Sometimes it takes a while to respond
-        try:
-            ok_index = status_res.index("OK")
-        except ValueError:
-            raise ValueError("Expected message 'OK' from nimbie "
-                            +"but did not receive message. Instead got "
-                            +str(status_res))
-        status = status_res[ok_index + 1]
-        return status[2] == "1"
-    
+        return self.get_state()["disk_available"]
+
     # Load the next disk into the cd reader    
     def load_next_disk(self):
         open_tray()
