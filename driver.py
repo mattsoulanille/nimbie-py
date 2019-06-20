@@ -2,7 +2,9 @@ import usb.core
 import usb.util
 array = usb.util.array.array
 import sys
-import time
+
+from eject import open_tray, close_tray
+
 
 # Largest incoming packet in bytes as listed in the endpoint descriptor
 IN_SIZE = 64
@@ -94,8 +96,20 @@ def read():
 def print_data(array):
     print(array_to_string(array))
 
+# If the state of the hardware does not support
+# the requested operation
+class HardwareStateError(Exception):
+    pass
+
+# No disk available in the input queue
+class NoDiskError(HardwareStateError):
+    pass
+
 # Place the next disk on the tray
 def place_disk():
+    if (not disk_available()):
+        raise NoDiskError("Cannot place non-existent disk")
+
     return send_command(0x52, 0x01)
 
 # Lift the disk from the tray
@@ -110,3 +124,30 @@ def accept_disk():
 def reject_disk():
     return send_command(0x52, 0x03)
 
+# Whether or not a disk is available in the input queue
+def disk_available():
+    status_res = send_command(0x43)
+    assert status_res[1] == "OK"
+    status = status_res[2]
+    return status[2] == "1"
+    
+    
+# Load the next disk into the cd reader    
+def load_next_disk():
+    open_tray()
+    place_disk()
+    close_tray()
+
+# Accept the currently loaded disk
+def accept_current_disk():
+    open_tray()
+    lift_disk()
+    close_tray()
+    accept_disk()
+
+# Reject the currently loaded disk
+def reject_current_disk():
+    open_tray()
+    lift_disk()
+    close_tray()
+    reject_disk()
