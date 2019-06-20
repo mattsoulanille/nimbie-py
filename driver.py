@@ -42,6 +42,9 @@ class DropperError(HardwareStateError):
 
 class Nimbie:
     def __init__(self):
+        """Detect the connected Nimbie"""
+
+        
         dev = usb.core.find(idVendor=0x1723, idProduct=0x0945)
         if dev is None:
             raise ValueError('Device not found')# was it found?
@@ -71,7 +74,10 @@ class Nimbie:
             usb.util.ENDPOINT_OUT)
 
         
-    def send_command(self, *args: int) -> str:
+    def send_command(self, *command: int) -> str:
+        """
+        Send a command of up to six bytes to the Nimbie
+        """
         if len(args) > 6:
             raise Exception("Too many arguments. Maximum of 6")
 
@@ -81,9 +87,18 @@ class Nimbie:
 
         self.out_ep.write(message)
         response = self.get_response()
-        return self.extract_string_response(response)
+        return self.extract_statuscode(response)
 
     def get_response(self, minimum=1) -> List[str]:
+        """
+        Get the Nimbie's raw response to a command
+
+        The nimbie sends several messages in response to a command.
+        This function reads messages from the Nimbie until it receives
+        an empty message. Since the first message is usually empty, 
+        the `minimum` variable specifies a minimum number of messages
+        to read.
+        """
         # Get at least `minimum` messages
         messages = []
 
@@ -100,8 +115,13 @@ class Nimbie:
         return messages
 
     @staticmethod
-    def extract_string_response(response_list: List[str]) -> str:
-        # Sometimes it takes a while to respond
+    def extract_statuscode(response_list: List[str]) -> str:
+        """Attempt to extract the Nimbie's status code from a sequence of its messages
+
+        The Nimbie responds to commands with an undefined number of 
+        empty messages, then the message "OK", and finally its status code.
+        This function extracts and returns the status code.
+        """
         try:
             ok_index = response_list.index("OK")
         except ValueError:
@@ -113,6 +133,7 @@ class Nimbie:
 
     @staticmethod
     def array_to_string(array: array) -> str:
+        """Attempt to parse an array of integers as a null terminated ASCII string"""
         if (len(array) == 0):
             return ""
 
@@ -122,10 +143,15 @@ class Nimbie:
         return "".join([chr(x) for x in array][:-1])
 
     def read_data(self) -> array:
+        """Read the next message from the Nimbie as an array of integers"""
         # Maybe have the timeout be an option instead of just 20 seconds?
         return self.in_ep.read(IN_SIZE, 20000)
 
     def read(self) -> Union[str, array]:
+        """Attempt to read a null terminated string from the Nimbie
+
+        Returns an array of integers if it is not null terminated
+        """
         data = self.read_data()
         try:
             return self.array_to_string(data)
@@ -134,6 +160,10 @@ class Nimbie:
 
     @staticmethod
     def decode_statuscode(statuscode: str) -> Union[Exception, str]:
+        """Decode one of the Nimbie's status codes
+        
+        Returns an exception on error codes and a string on status codes.
+        """
         assert statuscode[0:3] == "AT+" # The prefix for all status codes
         code = statuscode[3:] # The part that changes
 
@@ -158,31 +188,40 @@ class Nimbie:
         return "Unknown status code"
 
     # Try the command and throw an error if we get an error code
-    def try_command(self, *args: int) -> str:
-        result = self.send_command(*args)
+    def try_command(self, *command: int) -> str:
+        """Try the command, throwing an error if the Nimbie throws one"""
+        result = self.send_command(*command)
         decoded = self.decode_statuscode(result)
         if isinstance(decoded, Exception):
             raise decoded
         return decoded
         
-    # Place the next disk on the tray
     def place_disk(self) -> str:
+        """Place the next disk from the queue into the tray"""
         return self.try_command(0x52, 0x01)
 
-    # Lift the disk from the tray
     def lift_disk(self) -> str:
+        """Lift the disk from the tray"""
         return self.try_command(0x47, 0x01)
 
-    # Drop the disk into the accept pile
     def accept_disk(self) -> str:
+        """Drop the lifted disk into the accept pile"""
         return self.try_command(0x52, 0x02)
 
-    # Drop the disk into the reject pile
     def reject_disk(self) -> str:
+        """Drop the lifted disk into the reject pile"""
         return self.try_command(0x52, 0x03)
 
-    # Gets the state of the nimbie
     def get_state(self) -> Dict[str, bool]:
+        """Gets the state of the Nimbie hardware
+        
+        The state is a dictionary of boolean values with 
+        the following strings as keys:
+            disk_available
+            disk_in_open_tray
+            disk_lifted
+            tray_out
+        """
         state_str = self.send_command(0x43)
         
         return {"disk_available": state_str[2] == "1",
@@ -190,27 +229,37 @@ class Nimbie:
                 "disk_lifted": state_str[5] == "1",
                 "tray_out": state_str[6] == "1",
         }
-                
 
-    # Whether or not a disk is available in the input queue
     def disk_available(self) -> bool:
+        """Whether or not a disk is available in the input queue"""
         return self.get_state()["disk_available"]
 
-    # Load the next disk into the cd reader    
     def load_next_disk(self) -> None:
+        """Load the next disk into the reader
+        
+        Ejects the tray, places the disk, and returns the tray.
+        """
         open_tray()
         self.place_disk()
         close_tray()
 
-    # Accept the currently loaded disk
     def accept_current_disk(self) -> None:
+        """Accept the currently loaded disk
+        
+        Ejects the disk, picks it up, and drops it into
+        the accept pile.
+        """
         open_tray()
         self.lift_disk()
         close_tray()
         self.accept_disk()
 
-    # Reject the currently loaded disk
     def reject_current_disk(self) -> None:
+        """Reject the currently loaded disk
+
+        Ejects the disk, picks it up, and drops it into
+        the reject pile.
+        """
         open_tray()
         self.lift_disk()
         close_tray()
