@@ -78,12 +78,12 @@ class Nimbie:
         """
         Send a command of up to six bytes to the Nimbie
         """
-        if len(args) > 6:
+        if len(command) > 6:
             raise Exception("Too many arguments. Maximum of 6")
 
         message = bytearray(8)
-        for i in range(len(args)):
-            message[i + 2] = args[i]
+        for i in range(len(command)):
+            message[i + 2] = command[i]
 
         self.out_ep.write(message)
         response = self.get_response()
