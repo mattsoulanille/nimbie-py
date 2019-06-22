@@ -3,7 +3,8 @@ import usb.util
 array = usb.util.array.array
 import sys
 from eject import open_tray, close_tray
-from typing import List, Union, Dict
+from typing import List, Union, Dict, Callable
+from time import sleep
 
 # Largest incoming packet in bytes as listed in the endpoint descriptor
 IN_SIZE = 64
@@ -265,6 +266,38 @@ class Nimbie:
         close_tray()
         self.reject_disk()
 
+    def map_over_disks(self, func: Callable[[], bool]) -> None:
+        """Maps the function `func` over all disks in the disk queue
+        
+        `func` should return whether to accept or reject the current disk
+        """
+        # Handle if there's not already a disk in the tray
+        open_tray()
+        if not self.get_state()["disk_in_open_tray"]:
+            self.load_next_disk()
+        close_tray()
+
+        try:
+            while True:
+                if func():
+                    self.accept_current_disk()
+                else:
+                    self.reject_current_disk()
+                self.load_next_disk()
+
+        except NoDiskError:
+            # No more disks means we're done
+            return
+
+    def map_over_disks_forever(self, func: Callable[[], bool]) -> None:
+        """Maps `func` over disks forever, waiting for more when empty"""
+        while True:
+            self.map_over_disks(func)
+            while not self.disk_available():
+                sleep(1)
+            sleep(5) # Give the user a chance to place disks
+
+        
 
 if __name__ == "__main__":
     n = Nimbie()
