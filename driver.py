@@ -3,7 +3,7 @@ import usb.util
 array = usb.util.array.array
 import sys
 from eject import open_tray, close_tray
-from typing import List, Union, Dict, Callable
+from typing import List, Union, Dict, Callable, Optional
 from time import sleep
 
 # Largest incoming packet in bytes as listed in the endpoint descriptor
@@ -42,9 +42,11 @@ class DropperError(HardwareStateError):
     pass
 
 class Nimbie:
-    def __init__(self):
+    def __init__(self, open_tray_fn: Optional[Callable] = open_tray, close_tray_fn: Optional[Callable] = close_tray):
         """Detect the connected Nimbie"""
 
+        self.open_tray_fn = open_tray_fn
+        self.close_tray_fn = close_tray_fn
         
         dev = usb.core.find(idVendor=0x1723, idProduct=0x0945)
         if dev is None:
@@ -240,9 +242,9 @@ class Nimbie:
         
         Ejects the tray, places the disk, and returns the tray.
         """
-        open_tray()
+        self.maybe_open_tray()
         self.place_disk()
-        close_tray()
+        self.maybe_close_tray()
 
     def accept_current_disk(self) -> None:
         """Accept the currently loaded disk
@@ -250,9 +252,9 @@ class Nimbie:
         Ejects the disk, picks it up, and drops it into
         the accept pile.
         """
-        open_tray()
+        self.maybe_open_tray()
         self.lift_disk()
-        close_tray()
+        self.maybe_close_tray()
         self.accept_disk()
 
     def reject_current_disk(self) -> None:
@@ -261,10 +263,26 @@ class Nimbie:
         Ejects the disk, picks it up, and drops it into
         the reject pile.
         """
-        open_tray()
+        self.maybe_open_tray()
         self.lift_disk()
-        close_tray()
+        self.maybe_close_tray()
         self.reject_disk()
+
+    def is_tray_out(self) -> bool:
+        """Whether or not the disk tray is out"""
+        return self.get_state()["tray_out"]
+
+    def is_disk_in_open_tray(self) -> bool:
+        """Whether a disk in an open tray"""
+        return self.get_state()["disk_in_open_tray"]
+
+    def maybe_open_tray(self):
+        if not self.is_tray_out():
+            self.open_tray_fn()
+
+    def maybe_close_tray(self):
+        if self.is_tray_out():
+            self.close_tray_fn()
 
     def map_over_disks(self, func: Callable[[], bool]) -> None:
         """Maps the function `func` over all disks in the disk queue
@@ -272,10 +290,10 @@ class Nimbie:
         `func` should return whether to accept or reject the current disk
         """
         # Handle if there's not already a disk in the tray
-        open_tray()
+        self.maybe_open_tray()
         if not self.get_state()["disk_in_open_tray"]:
             self.load_next_disk()
-        close_tray()
+        self.maybe_close_tray()
 
         try:
             while True:
